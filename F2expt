@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>實驗 9.5 中和作用 - 智能數據採集系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
+        .camera-container { 
+            position: relative; width: 100%; max-width: 360px; margin: auto; 
+            overflow: hidden; border-radius: 2rem; border: 6px solid #1e293b;
+            background: #000; aspect-ratio: 3/4; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+        }
+        #video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .detector-overlay { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            width: 90px; height: 90px; border: 3px solid white; box-shadow: 0 0 0 4000px rgba(0,0,0,0.6);
+            pointer-events: none; z-index: 10; border-radius: 12px;
+        }
+        .pulse { animation: pulse-border 2s infinite; }
+        @keyframes pulse-border {
+            0% { border-color: rgba(255,255,255,1); transform: translate(-50%, -50%) scale(1); }
+            50% { border-color: rgba(99,102,241,1); transform: translate(-50%, -50%) scale(1.05); }
+            100% { border-color: rgba(255,255,255,1); transform: translate(-50%, -50%) scale(1); }
+        }
+        .manual-mode-only { display: none; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen p-3 md:p-6">
+
+    <div class="max-w-6xl mx-auto bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-slate-200">
+        <!-- 頂部導航 -->
+        <header class="bg-slate-900 text-white p-6 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/50">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-black tracking-tight">實驗 9.5 中和作用數據採集</h1>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">GitHub Pages Deployment Mode</p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-900/20">📥 導出 CSV</button>
+                <div class="bg-slate-800 p-2 rounded-xl border border-slate-700 flex items-center gap-2">
+                    <span class="text-[9px] font-bold text-slate-500">組別</span>
+                    <input type="text" id="group-id" class="bg-transparent border-b border-slate-600 w-12 text-center font-bold outline-none focus:border-indigo-500" value="G1">
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12">
+            <!-- 左側控制區 -->
+            <div class="lg:col-span-5 p-6 bg-slate-50/50 border-r border-slate-100 space-y-6">
+                
+                <div class="space-y-4">
+                    <div class="flex justify-between items-end">
+                        <span class="text-[11px] font-black text-slate-400 uppercase tracking-widest">光譜色彩分析儀</span>
+                        <button onclick="toggleManual()" id="mode-toggle" class="text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 px-3 py-1 rounded-full transition-colors">切換手動輸入</button>
+                    </div>
+
+                    <div class="camera-container" id="cam-wrapper">
+                        <div id="setup-ui" class="text-center p-8 space-y-4 z-20">
+                            <p class="text-slate-400 text-xs">請授權瀏覽器訪問相機以進行色彩辨識</p>
+                            <button onclick="initCamera()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-indigo-500/40 transition-all active:scale-95">啟動分析鏡頭</button>
+                        </div>
+                        <video id="webcam" autoplay playsinline muted class="hidden"></video>
+                        <div id="reticle" class="detector-overlay pulse hidden"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 space-y-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <span class="text-[10px] font-black text-slate-400 block uppercase mb-1">即時 pH 預測</span>
+                            <div id="ph-val" class="text-6xl font-black text-slate-900 tracking-tighter">--</div>
+                        </div>
+                        <div class="text-center">
+                            <div id="color-preview" class="w-16 h-16 rounded-2xl bg-slate-100 border-4 border-white shadow-inner mx-auto mb-2 transition-colors duration-300"></div>
+                            <button onclick="setCalibration()" class="bg-amber-500 hover:bg-amber-400 text-white text-[10px] px-4 py-1.5 rounded-full font-black shadow-lg shadow-amber-500/20 active:scale-90 transition-all">校準 pH 7.0</button>
+                        </div>
+                    </div>
+
+                    <div id="manual-ui" class="manual-mode-only p-4 bg-indigo-50 rounded-2xl border border-indigo-100 animate-fade-in">
+                        <div class="flex justify-between text-[10px] font-bold text-indigo-700 mb-2">
+                            <span>手動調節 pH</span>
+                            <span id="slider-hint">7.0</span>
+                        </div>
+                        <input type="range" min="0" max="14" step="0.1" value="7" class="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" oninput="manualAdjust(this.value)">
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-end px-1">
+                            <span class="text-[11px] font-black text-slate-400 uppercase tracking-widest">加入鹼液體積 (cm³)</span>
+                            <span id="vol-display" class="text-2xl font-black text-indigo-600 font-mono italic">0.0</span>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="changeVol(-0.5)" class="flex-1 h-14 bg-slate-100 hover:bg-slate-200 rounded-2xl font-black text-xl transition-colors">-0.5</button>
+                            <button onclick="changeVol(0.5)" class="flex-1 h-14 bg-slate-100 hover:bg-slate-200 rounded-2xl font-black text-xl transition-colors">+0.5</button>
+                        </div>
+                    </div>
+
+                    <button onclick="logDataPoint()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-xl shadow-xl shadow-indigo-500/30 transition-all active:scale-95">
+                        記錄此數據點
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右側圖表區 -->
+            <div class="lg:col-span-7 p-6 flex flex-col space-y-6 bg-white">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-black text-slate-800 italic uppercase tracking-tighter">Titration Curve</h2>
+                    <div class="flex gap-2">
+                         <div class="text-[10px] font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">已記錄: <span id="log-count" class="text-indigo-600">0</span></div>
+                         <button onclick="clearAll()" class="text-[10px] font-bold text-rose-500 hover:underline">清空</button>
+                    </div>
+                </div>
+
+                <div class="flex-1 min-h-[450px] bg-slate-50/30 rounded-[2rem] p-4 border border-slate-50">
+                    <canvas id="titrationChart"></canvas>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                        <p class="text-[10px] font-bold text-blue-400 uppercase mb-1">中和點預測</p>
+                        <p class="text-lg font-black text-blue-700 italic">~ 10.0 cm³</p>
+                    </div>
+                    <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase mb-1">當前斜率</p>
+                        <p id="slope-info" class="text-lg font-black text-indigo-700 italic">穩定</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 處理畫布 (隱藏) -->
+    <canvas id="processCanvas" class="hidden"></canvas>
+
+    <script>
+        let chart;
+        let dataPoints = [];
+        let isManualMode = false;
+        let calibBase = null;
+        let currentVol = 0;
+
+        // 初始化相機
+        async function initCamera() {
+            const video = document.getElementById('webcam');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: 640, height: 480 },
+                    audio: false 
+                });
+                video.srcObject = stream;
+                video.classList.remove('hidden');
+                document.getElementById('setup-ui').classList.add('hidden');
+                document.getElementById('reticle').classList.remove('hidden');
+                video.onloadedmetadata = () => {
+                    video.play();
+                    requestAnimationFrame(analysisLoop);
+                };
+            } catch (e) {
+                alert("無法存取相機，請檢查瀏覽器權限設置。");
+            }
+        }
+
+        // 循環分析鏡頭畫面
+        function analysisLoop() {
+            if (isManualMode) { requestAnimationFrame(analysisLoop); return; }
+            
+            const video = document.getElementById('webcam');
+            const canvas = document.getElementById('processCanvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = 100; canvas.height = 100;
+                // 擷取中心區域
+                ctx.drawImage(video, video.videoWidth/2-50, video.videoHeight/2-50, 100, 100, 0, 0, 100, 100);
+                
+                const frame = ctx.getImageData(0, 0, 100, 100);
+                let r=0, g=0, b=0;
+                for (let i = 0; i < frame.data.length; i += 4) {
+                    r += frame.data[i];
+                    g += frame.data[i+1];
+                    b += frame.data[i+2];
+                }
+                const total = frame.data.length / 4;
+                const avgR = r/total, avgG = g/total, avgB = b/total;
+
+                // 更新 UI 預覽色
+                document.getElementById('color-preview').style.backgroundColor = `rgb(${avgR},${avgG},${avgB})`;
+
+                // 算法估計 pH (基於紅色通道的強弱，適用於通用指示劑從紅到紫的變化)
+                let estimatedPH = 7.0;
+                if (calibBase) {
+                    // 校準邏輯：pH 7 時的 R 值作為基準
+                    estimatedPH = (7.0 - (avgR - calibBase.r) / 18).toFixed(1);
+                } else {
+                    // 默認邏輯
+                    estimatedPH = (14 - (avgR / 255) * 12).toFixed(1);
+                }
+
+                estimatedPH = Math.max(0, Math.min(14, estimatedPH));
+                document.getElementById('ph-val').innerText = estimatedPH;
+            }
+            requestAnimationFrame(analysisLoop);
+        }
+
+        function setCalibration() {
+            const color = document.getElementById('color-preview').style.backgroundColor;
+            const rgb = color.match(/\d+/g);
+            if (rgb) {
+                calibBase = { r: parseInt(rgb[0]), g: parseInt(rgb[1]), b: parseInt(rgb[2]) };
+                alert("已校準！當前顏色設定為 pH 7.0 基準。");
+            }
+        }
+
+        function toggleManual() {
+            isManualMode = !isManualMode;
+            document.getElementById('manual-ui').style.display = isManualMode ? 'block' : 'none';
+            document.getElementById('cam-wrapper').style.opacity = isManualMode ? '0.2' : '1';
+            document.getElementById('mode-toggle').innerText = isManualMode ? '回到鏡頭模式' : '切換手動輸入';
+            if (isManualMode) manualAdjust(7);
+        }
+
+        function manualAdjust(val) {
+            document.getElementById('ph-val').innerText = parseFloat(val).toFixed(1);
+            document.getElementById('slider-hint').innerText = parseFloat(val).toFixed(1);
+        }
+
+        function changeVol(n) {
+            currentVol = Math.max(0, currentVol + n);
+            document.getElementById('vol-display').innerText = currentVol.toFixed(1);
+        }
+
+        function logDataPoint() {
+            const ph = parseFloat(document.getElementById('ph-val').innerText);
+            const vol = currentVol;
+            
+            // 檢查是否重複記錄相同體積
+            const existingIdx = dataPoints.findIndex(p => p.x === vol);
+            if (existingIdx !== -1) {
+                dataPoints[existingIdx].y = ph;
+            } else {
+                dataPoints.push({ x: vol, y: ph });
+            }
+
+            dataPoints.sort((a, b) => a.x - b.x);
+            updateChart();
+            document.getElementById('log-count').innerText = dataPoints.length;
+            
+            // 簡單斜率分析
+            if (dataPoints.length > 2) {
+                const last = dataPoints[dataPoints.length-1];
+                const prev = dataPoints[dataPoints.length-2];
+                const diff = Math.abs(last.y - prev.y);
+                document.getElementById('slope-info').innerText = diff > 1.5 ? "劇烈變化" : "穩定";
+                document.getElementById('slope-info').className = diff > 1.5 ? "text-lg font-black text-rose-600 italic" : "text-lg font-black text-indigo-700 italic";
+            }
+        }
+
+        function updateChart() {
+            chart.data.datasets[0].data = dataPoints;
+            chart.update();
+        }
+
+        function exportCSV() {
+            if (dataPoints.length === 0) return alert("尚無數據可導出");
+            let csv = "Volume(cm3),pH\n";
+            dataPoints.forEach(p => csv += `${p.x},${p.y}\n`);
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('hidden', '');
+            a.setAttribute('href', url);
+            a.setAttribute('download', `Titration_Data_${document.getElementById('group-id').value}.csv`);
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function clearAll() {
+            if (confirm("確定要清空所有記錄嗎？")) {
+                dataPoints = [];
+                updateChart();
+                document.getElementById('log-count').innerText = "0";
+            }
+        }
+
+        window.onload = () => {
+            const ctx = document.getElementById('titrationChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'pH 變化曲線',
+                        data: [],
+                        borderColor: '#4f46e5',
+                        backgroundColor: '#4f46e5',
+                        showLine: true,
+                        tension: 0.3,
+                        pointRadius: 6,
+                        pointHoverRadius: 10,
+                        borderWidth: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Volume (cm³)', font: { weight: 'bold' } }, min: 0 },
+                        y: { title: { display: true, text: 'pH Value', font: { weight: 'bold' } }, min: 0, max: 14 }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        };
+    </script>
+</body>
+</html>
