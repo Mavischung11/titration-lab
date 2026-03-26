@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lab 9.5 智能中和實驗平台 (網格修正版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, query, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const apiKey = ""; 
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'titration-lab-default';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: apiKey,
+                authDomain: "titration-lab.firebaseapp.com",
+                projectId: "titration-lab",
+                storageBucket: "titration-lab.firebasestorage.app",
+                messagingSenderId: "121365126636",
+                appId: "1:121365126636:web:028bc4dfcf62937bb3b4c9"
+            };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        window.fb = { db, auth, collection, doc, setDoc, addDoc, onSnapshot, query, isCloudEnabled: false, appId };
+
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth Failed", error);
+            }
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.fb.isCloudEnabled = true;
+                const indicator = document.getElementById('cloud-indicator');
+                if (indicator) indicator.innerText = `雲端連線中: ${user.uid.substring(0,6)}`;
+            }
+        });
+
+        initAuth();
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+        .page { display: none; min-height: 100vh; opacity: 0; transition: opacity 0.3s ease; }
+        .page.active { display: flex; flex-direction: column; opacity: 1; }
+        
+        .cam-ring {
+            width: 220px; height: 220px; border: 8px solid #1e293b;
+            border-radius: 50%; overflow: hidden; position: relative; margin: auto;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+        }
+        #webcam { width: 100%; height: 100%; object-fit: cover; }
+        .target-box { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.8); border-radius: 8px;
+            box-shadow: 0 0 0 500px rgba(0,0,0,0.3);
+        }
+
+        .mini-nav {
+            position: fixed; top: 1rem; left: 1rem; z-index: 50;
+            display: flex; gap: 0.5rem;
+        }
+        
+        .data-card {
+            background: white; border-radius: 1rem; padding: 0.75rem;
+            display: flex; justify-content: space-between; align-items: center;
+            border: 1px solid #f1f5f9; margin-bottom: 0.5rem;
+        }
+
+        .status-bar {
+            background: white; border-bottom: 1px solid #e2e8f0; padding: 0.75rem 1rem;
+            display: flex; justify-content: center; gap: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .status-item { display: flex; align-items: center; gap: 0.5rem; }
+        .status-label { font-size: 0.7rem; font-weight: 900; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+        .status-value { font-size: 0.85rem; font-weight: 700; color: #1e293b; }
+    </style>
+</head>
+<body class="bg-slate-50">
+
+    <div id="mini-nav" class="mini-nav hidden">
+        <button onclick="goHome()" class="p-3 bg-white shadow-md rounded-2xl text-xl border border-slate-200">🏠</button>
+        <button id="nav-toggle" onclick="toggleMode()" class="px-4 py-2 bg-slate-800 text-white text-[10px] font-black rounded-2xl shadow-md uppercase">切換模式</button>
+    </div>
+
+    <!-- 1. 初始首頁 -->
+    <div id="page-home" class="page active items-center justify-center p-6 py-12">
+        <div class="w-full max-w-md space-y-8">
+            <div class="text-center">
+                <h1 class="text-6xl font-black text-slate-800 italic tracking-tighter mb-2">TITRA-SMART</h1>
+                <p class="text-slate-400 font-bold text-xs uppercase tracking-[0.3em]">智能中和實驗平台</p>
+            </div>
+
+            <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4">
+                <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest text-center">實驗參數設定</h3>
+                <div class="space-y-3">
+                    <input type="text" id="setup-acid" placeholder="酸液 (如: HCl)" class="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500">
+                    <input type="text" id="setup-alkali" placeholder="鹼液 (如: NaOH)" class="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500">
+                    <input type="text" id="setup-indicator" placeholder="指示劑 (如: 通用指示劑)" class="w-full px-6 py-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="startMode('manual')" class="p-6 bg-white border-2 border-slate-100 rounded-[2rem] shadow-lg hover:border-indigo-500 transition-all text-center">
+                    <div class="text-3xl mb-2">✍️</div>
+                    <h3 class="font-black text-sm text-slate-800">手動輸入</h3>
+                </button>
+                <button onclick="startMode('auto')" class="p-6 bg-indigo-600 rounded-[2rem] shadow-lg hover:bg-indigo-700 transition-all text-center text-white">
+                    <div class="text-3xl mb-2">📷</div>
+                    <h3 class="font-black text-sm">自動偵測</h3>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 手動模式頁面 -->
+    <div id="page-manual" class="page">
+        <div id="manual-status-container"></div>
+        <div class="p-6 max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div class="lg:col-span-4 space-y-4">
+                <div class="bg-white p-6 rounded-[2rem] shadow-sm space-y-4">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">數據錄入</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400">體積 (cm³)</label>
+                            <input type="number" id="m-vol" value="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none ring-indigo-500 focus:ring-2">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400">pH 值</label>
+                            <input type="number" id="m-ph" value="7.0" step="0.1" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none ring-indigo-500 focus:ring-2">
+                        </div>
+                    </div>
+                    <button onclick="addManualData()" class="w-full py-4 bg-slate-800 text-white rounded-2xl font-bold hover:bg-slate-900 active:scale-95 transition">紀錄數據點</button>
+                </div>
+                <div id="manual-list" class="max-h-[300px] overflow-y-auto space-y-2 pr-2"></div>
+            </div>
+            <div class="lg:col-span-8 bg-white p-6 rounded-[3rem] shadow-sm flex flex-col min-h-[450px]">
+                <canvas id="manualChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. 自動模式頁面 -->
+    <div id="page-auto" class="page">
+        <div id="auto-status-container"></div>
+        <div class="p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div class="lg:col-span-5 space-y-4">
+                <div class="bg-white p-6 rounded-[3rem] shadow-xl text-center relative overflow-hidden">
+                    <div class="cam-ring mb-4">
+                        <video id="webcam" autoplay playsinline muted></video>
+                        <div class="target-box"></div>
+                    </div>
+                    <div class="flex justify-between items-end px-4 mt-4">
+                        <div class="text-left">
+                            <span class="text-[10px] font-black text-slate-400 block uppercase mb-1">感應 pH</span>
+                            <div id="auto-ph" class="text-6xl font-black text-slate-800 italic">--</div>
+                        </div>
+                        <div id="auto-color" class="w-16 h-16 rounded-2xl shadow-inner border-4 border-white transition-colors duration-300"></div>
+                    </div>
+                    <div id="alert-box" class="hidden mt-4 py-2 bg-rose-500 text-white rounded-xl text-[10px] font-black animate-pulse uppercase tracking-widest">接近中和點</div>
+                </div>
+
+                <div class="bg-indigo-900 p-6 rounded-[2.5rem] text-white shadow-2xl space-y-6">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold opacity-60 uppercase">滴定體積 / cm³</span>
+                        <div class="flex items-center gap-4">
+                            <button onclick="adjVol(-1)" class="w-12 h-12 bg-white/10 rounded-2xl font-bold hover:bg-white/20">-</button>
+                            <span id="auto-vol" class="text-4xl font-black min-w-[3rem] text-center">0</span>
+                            <button onclick="adjVol(1)" class="w-12 h-12 bg-white/10 rounded-2xl font-bold hover:bg-white/20">+</button>
+                        </div>
+                    </div>
+                    <button id="sync-btn" onclick="syncAutoData()" class="w-full py-5 bg-white text-indigo-900 rounded-[1.5rem] font-black shadow-xl active:scale-95 transition">紀錄數據並同步雲端</button>
+                </div>
+                
+                <div class="bg-white p-5 rounded-[2rem] border border-slate-100 grid grid-cols-3 gap-2">
+                    <button onclick="calibrate(1)" class="py-3 bg-rose-50 rounded-xl text-[10px] font-bold text-rose-600">校準 pH 1</button>
+                    <button onclick="calibrate(7)" class="py-3 bg-emerald-50 rounded-xl text-[10px] font-bold text-emerald-600">校準 pH 7</button>
+                    <button onclick="calibrate(13)" class="py-3 bg-indigo-50 rounded-xl text-[10px] font-bold text-indigo-600">校準 pH 13</button>
+                </div>
+            </div>
+
+            <div class="lg:col-span-7 bg-white p-6 rounded-[3.5rem] shadow-xl flex flex-col min-h-[500px]">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest">實時滴定曲線</h3>
+                    <span id="cloud-indicator" class="text-[9px] bg-slate-100 px-3 py-1 rounded-full text-slate-400 font-bold italic">雲端連線中...</span>
+                </div>
+                <div class="flex-1">
+                    <canvas id="autoChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 狀態列模板 -->
+    <template id="status-bar-template">
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-label">酸液</span>
+                <span class="status-value val-acid">--</span>
+            </div>
+            <div class="status-item border-l border-slate-100 pl-4">
+                <span class="status-label">鹼液</span>
+                <span class="status-value val-alkali">--</span>
+            </div>
+            <div class="status-item border-l border-slate-100 pl-4">
+                <span class="status-label">指示劑</span>
+                <span class="status-value val-indicator">--</span>
+            </div>
+        </div>
+    </template>
+
+    <canvas id="snapCanvas" class="hidden"></canvas>
+
+    <script>
+        // 改良版座標軸外掛：負責繪製交叉軸箭頭與唯一的 0
+        const arrowPlugin = {
+            id: 'chartArrow',
+            afterDraw: (chart) => {
+                const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+                ctx.save();
+                ctx.strokeStyle = '#334155'; ctx.fillStyle = '#334155'; ctx.lineWidth = 2.5;
+
+                // Y 軸 (跨過 X=0 處)
+                const yAxisX = x.getPixelForValue(0);
+                if (yAxisX >= left && yAxisX <= right) {
+                    ctx.beginPath(); ctx.moveTo(yAxisX, bottom + 10); ctx.lineTo(yAxisX, top - 20); ctx.stroke();
+                    // 箭頭
+                    ctx.beginPath(); ctx.moveTo(yAxisX, top - 20); ctx.lineTo(yAxisX - 6, top - 8); ctx.lineTo(yAxisX + 6, top - 8); ctx.closePath(); ctx.fill();
+                }
+
+                // X 軸 (跨過 Y=0 處)
+                const xAxisY = y.getPixelForValue(0);
+                if (xAxisY >= top && xAxisY <= bottom) {
+                    ctx.beginPath(); ctx.moveTo(left - 10, xAxisY); ctx.lineTo(right + 25, xAxisY); ctx.stroke();
+                    // 箭頭
+                    ctx.beginPath(); ctx.moveTo(right + 25, xAxisY); ctx.lineTo(right + 13, xAxisY - 6); ctx.lineTo(right + 13, xAxisY + 6); ctx.closePath(); ctx.fill();
+                    
+                    // 【關鍵修正】在交叉處繪製唯一的 0
+                    ctx.font = 'bold 12px Noto Sans TC';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('0', yAxisX - 6, xAxisY + 16);
+                }
+                ctx.restore();
+            }
+        };
+        Chart.register(arrowPlugin);
+
+        const creatorDefaultData = {
+            "1": {r:230,g:30,b:30}, "3": {r:255,g:100,b:30}, "5": {r:240,g:200,b:50}, 
+            "7": {r:50,g:180,b:70}, "9": {r:30,g:130,b:200}, "11": {r:50,g:60,b:220}, "13": {r:120,g:40,b:180}
+        };
+
+        let currentMode = null;
+        let charts = { manual: null, auto: null };
+        let dataStore = { manual: [], auto: [] };
+        let volume = 0;
+        let lastRGB = { r: 0, g: 0, b: 0 };
+        let activeColorMap = JSON.parse(localStorage.getItem('lab_creator_map')) || { ...creatorDefaultData };
+
+        function startMode(mode) {
+            const acid = document.getElementById('setup-acid').value || 'HCl';
+            const alkali = document.getElementById('setup-alkali').value || 'NaOH';
+            const indicator = document.getElementById('setup-indicator').value || '通用指示劑';
+            
+            ['manual-status-container', 'auto-status-container'].forEach(cid => {
+                const target = document.getElementById(cid);
+                const temp = document.getElementById('status-bar-template').content.cloneNode(true);
+                temp.querySelector('.val-acid').innerText = acid;
+                temp.querySelector('.val-alkali').innerText = alkali;
+                temp.querySelector('.val-indicator').innerText = indicator;
+                target.innerHTML = ''; target.appendChild(temp);
+            });
+
+            currentMode = mode;
+            switchPage(mode);
+            document.getElementById('mini-nav').classList.remove('hidden');
+        }
+
+        function switchPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(`page-${pageId}`).classList.add('active');
+            if(pageId === 'manual' && !charts.manual) charts.manual = initChart('manualChart');
+            if(pageId === 'auto') {
+                if(!charts.auto) charts.auto = initChart('autoChart');
+                startCamera();
+            }
+        }
+
+        function initChart(id) {
+            const ctx = document.getElementById(id).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: { datasets: [{
+                    label: 'pH', data: [], borderColor: '#6366f1', borderWidth: 4, pointRadius: 6, pointBackgroundColor: '#fff', fill: false, tension: 0.3
+                }]},
+                options: {
+                    responsive: true, maintainAspectRatio: false, clip: false,
+                    layout: { padding: { left: 20, right: 40, top: 30, bottom: 20 } },
+                    scales: {
+                        x: { 
+                            type: 'linear', min: 0, max: 20, 
+                            title: { display: true, text: 'V (cm³)', align: 'end', font: { weight: 'bold' } },
+                            grid: { 
+                                display: true,
+                                color: 'rgba(0,0,0,0.05)', // 淡化網格線
+                                drawBorder: false
+                            },
+                            ticks: { 
+                                font: { weight: 'bold' },
+                                // 回傳空字串以隱藏 0，避免跟外掛繪製的 0 重疊
+                                callback: function(value) { return value === 0 ? '' : value; }
+                            }
+                        },
+                        y: { 
+                            min: 0, max: 14, 
+                            title: { display: true, text: 'pH', align: 'end', font: { weight: 'bold' } },
+                            grid: { 
+                                display: true,
+                                color: 'rgba(0,0,0,0.05)', // 淡化網格線
+                                drawBorder: false
+                            },
+                            ticks: { 
+                                font: { weight: 'bold' },
+                                // 回傳空字串以隱藏 0
+                                callback: function(value) { return value === 0 ? '' : value; }
+                            }
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function addManualData() {
+            const v = parseFloat(document.getElementById('m-vol').value);
+            const p = parseFloat(document.getElementById('m-ph').value);
+            if(isNaN(v) || isNaN(p)) return;
+            dataStore.manual.push({ x: v, y: p }); dataStore.manual.sort((a,b) => a.x - b.x);
+            charts.manual.data.datasets[0].data = dataStore.manual; charts.manual.update();
+            renderManualList();
+        }
+
+        function renderManualList() {
+            const container = document.getElementById('manual-list');
+            container.innerHTML = dataStore.manual.map((d, i) => `
+                <div class="data-card">
+                    <span class="font-black text-slate-700">V: ${d.x.toFixed(1)} | pH: ${d.y.toFixed(1)}</span>
+                    <button onclick="dataStore.manual.splice(${i},1);charts.manual.update();renderManualList();" class="text-rose-500 font-bold text-[10px] uppercase">移除</button>
+                </div>
+            `).join('');
+        }
+
+        async function startCamera() {
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                document.getElementById('webcam').srcObject = s;
+                requestAnimationFrame(analyzeLoop);
+            } catch (e) { console.error("鏡頭啟動失敗", e); }
+        }
+
+        function analyzeLoop() {
+            const v = document.getElementById('webcam');
+            const c = document.getElementById('snapCanvas');
+            if(v.readyState === v.HAVE_ENOUGH_DATA) {
+                const ctx = c.getContext('2d');
+                c.width = 40; c.height = 40;
+                ctx.drawImage(v, v.videoWidth/2-20, v.videoHeight/2-20, 40, 40, 0, 0, 40, 40);
+                const pix = ctx.getImageData(0,0,40,40).data;
+                let r=0, g=0, b=0;
+                for(let i=0; i<pix.length; i+=4) { r+=pix[i]; g+=pix[i+1]; b+=pix[i+2]; }
+                lastRGB = { r: Math.round(r/1600), g: Math.round(g/1600), b: Math.round(b/1600) };
+                document.getElementById('auto-color').style.backgroundColor = `rgb(${lastRGB.r},${lastRGB.g},${lastRGB.b})`;
+                let bestPH = 7; let minDist = Infinity;
+                Object.entries(activeColorMap).forEach(([ph, rgb]) => {
+                    const dist = Math.sqrt(Math.pow(lastRGB.r-rgb.r,2)+Math.pow(lastRGB.g-rgb.g,2)+Math.pow(lastRGB.b-rgb.b,2));
+                    if(dist < minDist) { minDist = dist; bestPH = parseFloat(ph); }
+                });
+                document.getElementById('auto-ph').innerText = bestPH.toFixed(1);
+                const alertBox = document.getElementById('alert-box');
+                if(bestPH > 5 && bestPH < 9) alertBox.classList.remove('hidden');
+                else alertBox.classList.add('hidden');
+            }
+            if(currentMode === 'auto') requestAnimationFrame(analyzeLoop);
+        }
+
+        function calibrate(ph) {
+            activeColorMap[ph] = { ...lastRGB };
+            localStorage.setItem('lab_creator_map', JSON.stringify(activeColorMap));
+        }
+
+        function adjVol(n) { volume = Math.max(0, volume + n); document.getElementById('auto-vol').innerText = volume; }
+
+        async function syncAutoData() {
+            const ph = parseFloat(document.getElementById('auto-ph').innerText);
+            dataStore.auto.push({ x: volume, y: ph }); dataStore.auto.sort((a,b) => a.x - b.x);
+            charts.auto.data.datasets[0].data = dataStore.auto; charts.auto.update();
+            
+            if(window.fb && window.fb.isCloudEnabled && window.fb.auth.currentUser) {
+                try {
+                    const path = `/artifacts/${window.fb.appId}/public/data/lab_records`;
+                    await window.fb.addDoc(window.fb.collection(window.fb.db, path), {
+                        vol: volume, ph: ph, timestamp: Date.now(), 
+                        uid: window.fb.auth.currentUser.uid,
+                        acid: document.querySelector('.val-acid').innerText,
+                        alkali: document.querySelector('.val-alkali').innerText
+                    });
+                } catch(e) { console.log("雲端同步失敗", e); }
+            }
+        }
+
+        function goHome() { location.reload(); }
+        function toggleMode() { const n = currentMode === 'manual' ? 'auto' : 'manual'; switchPage(n); currentMode = n; }
+    </script>
+</body>
+</html>
