@@ -3,324 +3,428 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>實驗 9.5 中和作用 - 智能數據採集系統</title>
+    <title>Lab 9.5 智能中和實驗平台</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, query, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBHMYiIA4V3PbB6B-hzXLVs-ReOMUzVBus",
+            authDomain: "titration-lab.firebaseapp.com",
+            projectId: "titration-lab",
+            storageBucket: "titration-lab.firebasestorage.app",
+            messagingSenderId: "121365126636",
+            appId: "1:121365126636:web:028bc4dfcf62937bb3b4c9"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        window.fb = { db, auth, collection, doc, setDoc, addDoc, onSnapshot, query, isCloudEnabled: false };
+
+        window.safeSignIn = async () => {
+            try {
+                await signInAnonymously(auth);
+                window.fb.isCloudEnabled = true;
+                console.log("Cloud synced.");
+            } catch (error) {
+                console.warn("Offline mode active.");
+                window.fb.isCloudEnabled = false;
+            }
+        };
+        window.safeSignIn();
+    </script>
+
     <style>
-        body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
-        .camera-container { 
-            position: relative; width: 100%; max-width: 360px; margin: auto; 
-            overflow: hidden; border-radius: 2rem; border: 6px solid #1e293b;
-            background: #000; aspect-ratio: 3/4; display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+        .page { display: none; min-height: 100vh; opacity: 0; transition: opacity 0.3s ease; }
+        .page.active { display: block; opacity: 1; }
+        .chart-container { position: relative; width: 100%; height: 350px; }
+        
+        .cam-ring {
+            width: 240px; height: 240px; border: 8px solid #1e293b;
+            border-radius: 50%; overflow: hidden; position: relative; margin: auto;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
         }
-        #video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        .detector-overlay { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            width: 90px; height: 90px; border: 3px solid white; box-shadow: 0 0 0 4000px rgba(0,0,0,0.6);
-            pointer-events: none; z-index: 10; border-radius: 12px;
+        #webcam { width: 100%; height: 100%; object-fit: cover; }
+        .target-box { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 35px; height: 35px; border: 2px dashed white; border-radius: 6px;
         }
-        .pulse { animation: pulse-border 2s infinite; }
-        @keyframes pulse-border {
-            0% { border-color: rgba(255,255,255,1); transform: translate(-50%, -50%) scale(1); }
-            50% { border-color: rgba(99,102,241,1); transform: translate(-50%, -50%) scale(1.05); }
-            100% { border-color: rgba(255,255,255,1); transform: translate(-50%, -50%) scale(1); }
+
+        .mini-nav {
+            position: fixed; top: 1rem; left: 1rem; z-index: 50;
+            display: flex; gap: 0.5rem;
         }
-        .manual-mode-only { display: none; }
+
+        input:focus { transform: scale(1.02); transition: transform 0.2s; }
     </style>
 </head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
+<body class="bg-slate-50">
 
-    <div class="max-w-6xl mx-auto bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-slate-200">
-        <!-- 頂部導航 -->
-        <header class="bg-slate-900 text-white p-6 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/50">
-                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
-                </div>
-                <div>
-                    <h1 class="text-xl font-black tracking-tight">實驗 9.5 中和作用數據採集</h1>
-                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">GitHub Pages Deployment Mode</p>
-                </div>
+    <!-- 迷你導航 -->
+    <div id="mini-nav" class="mini-nav hidden">
+        <button onclick="goHome()" class="p-3 bg-white shadow-md rounded-2xl text-xl border border-slate-200">🏠</button>
+        <button id="nav-toggle" onclick="toggleMode()" class="px-4 py-2 bg-slate-800 text-white text-xs font-bold rounded-2xl shadow-md border border-slate-700 uppercase tracking-tighter">切換模式</button>
+    </div>
+
+    <!-- 1. 初始首頁 -->
+    <div id="page-home" class="page active flex flex-col items-center justify-center p-6 space-y-8">
+        <div class="text-center">
+            <h1 class="text-5xl font-black text-slate-800 italic tracking-tighter mb-1">TITRA-SMART</h1>
+            <p class="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">智能中和實驗平台</p>
+        </div>
+
+        <div class="w-full max-w-sm bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 space-y-4">
+            <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest text-center">實驗參數設置</h3>
+            <div class="space-y-3">
+                <input type="text" id="setup-acid" placeholder="酸液名稱 (如: 稀氫氯酸)" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold border-2 border-transparent focus:border-indigo-500 outline-none">
+                <input type="text" id="setup-alkali" placeholder="鹼液名稱 (如: 稀氫氧化鈉)" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold border-2 border-transparent focus:border-indigo-500 outline-none">
+                <input type="text" id="setup-indicator" placeholder="指示劑 (如: 通用指示劑)" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold border-2 border-transparent focus:border-indigo-500 outline-none">
             </div>
-            <div class="flex gap-2">
-                <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-900/20">📥 導出 CSV</button>
-                <div class="bg-slate-800 p-2 rounded-xl border border-slate-700 flex items-center gap-2">
-                    <span class="text-[9px] font-bold text-slate-500">組別</span>
-                    <input type="text" id="group-id" class="bg-transparent border-b border-slate-600 w-12 text-center font-bold outline-none focus:border-indigo-500" value="G1">
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 w-full max-w-sm">
+            <button onclick="startMode('manual')" class="group p-6 bg-white border-2 border-slate-100 rounded-[2.5rem] shadow-xl hover:border-indigo-500 transition-all text-left">
+                <div class="text-3xl mb-2">✍️</div>
+                <h3 class="font-black text-xl text-slate-800">手動輸入模式</h3>
+                <p class="text-[10px] text-slate-400 font-bold uppercase">Manual Log & Graph</p>
+            </button>
+            <button onclick="startMode('auto')" class="group p-6 bg-indigo-600 rounded-[2.5rem] shadow-xl hover:bg-indigo-700 transition-all text-left text-white">
+                <div class="text-3xl mb-2">📷</div>
+                <h3 class="font-black text-xl">自動偵測模式</h3>
+                <p class="text-[10px] text-indigo-200 font-bold uppercase">AI Vision Detection</p>
+            </button>
+        </div>
+    </div>
+
+    <!-- 2. 手動模式頁面 -->
+    <div id="page-manual" class="page p-6 pt-20">
+        <div class="max-w-4xl mx-auto space-y-6">
+            <div class="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex justify-between items-center">
+                <div class="text-xs font-bold text-indigo-800">
+                    <span id="display-acid-m">--</span> + <span id="display-alkali-m">--</span>
                 </div>
-            </div>
-        </header>
-
-        <div class="grid grid-cols-1 lg:grid-cols-12">
-            <!-- 左側控制區 -->
-            <div class="lg:col-span-5 p-6 bg-slate-50/50 border-r border-slate-100 space-y-6">
-                
-                <div class="space-y-4">
-                    <div class="flex justify-between items-end">
-                        <span class="text-[11px] font-black text-slate-400 uppercase tracking-widest">光譜色彩分析儀</span>
-                        <button onclick="toggleManual()" id="mode-toggle" class="text-indigo-600 text-[11px] font-bold hover:bg-indigo-50 px-3 py-1 rounded-full transition-colors">切換手動輸入</button>
-                    </div>
-
-                    <div class="camera-container" id="cam-wrapper">
-                        <div id="setup-ui" class="text-center p-8 space-y-4 z-20">
-                            <p class="text-slate-400 text-xs">請授權瀏覽器訪問相機以進行色彩辨識</p>
-                            <button onclick="initCamera()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-indigo-500/40 transition-all active:scale-95">啟動分析鏡頭</button>
-                        </div>
-                        <video id="webcam" autoplay playsinline muted class="hidden"></video>
-                        <div id="reticle" class="detector-overlay pulse hidden"></div>
-                    </div>
-                </div>
-
-                <div class="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 space-y-6">
-                    <div class="flex justify-between items-center">
-                        <div>
-                            <span class="text-[10px] font-black text-slate-400 block uppercase mb-1">即時 pH 預測</span>
-                            <div id="ph-val" class="text-6xl font-black text-slate-900 tracking-tighter">--</div>
-                        </div>
-                        <div class="text-center">
-                            <div id="color-preview" class="w-16 h-16 rounded-2xl bg-slate-100 border-4 border-white shadow-inner mx-auto mb-2 transition-colors duration-300"></div>
-                            <button onclick="setCalibration()" class="bg-amber-500 hover:bg-amber-400 text-white text-[10px] px-4 py-1.5 rounded-full font-black shadow-lg shadow-amber-500/20 active:scale-90 transition-all">校準 pH 7.0</button>
-                        </div>
-                    </div>
-
-                    <div id="manual-ui" class="manual-mode-only p-4 bg-indigo-50 rounded-2xl border border-indigo-100 animate-fade-in">
-                        <div class="flex justify-between text-[10px] font-bold text-indigo-700 mb-2">
-                            <span>手動調節 pH</span>
-                            <span id="slider-hint">7.0</span>
-                        </div>
-                        <input type="range" min="0" max="14" step="0.1" value="7" class="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" oninput="manualAdjust(this.value)">
-                    </div>
-
-                    <div class="space-y-4">
-                        <div class="flex justify-between items-end px-1">
-                            <span class="text-[11px] font-black text-slate-400 uppercase tracking-widest">加入鹼液體積 (cm³)</span>
-                            <span id="vol-display" class="text-2xl font-black text-indigo-600 font-mono italic">0.0</span>
-                        </div>
-                        <div class="flex gap-3">
-                            <button onclick="changeVol(-0.5)" class="flex-1 h-14 bg-slate-100 hover:bg-slate-200 rounded-2xl font-black text-xl transition-colors">-0.5</button>
-                            <button onclick="changeVol(0.5)" class="flex-1 h-14 bg-slate-100 hover:bg-slate-200 rounded-2xl font-black text-xl transition-colors">+0.5</button>
-                        </div>
-                    </div>
-
-                    <button onclick="logDataPoint()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-xl shadow-xl shadow-indigo-500/30 transition-all active:scale-95">
-                        記錄此數據點
-                    </button>
-                </div>
+                <div class="text-[10px] bg-indigo-200 px-2 py-1 rounded-lg font-black text-indigo-700" id="display-ind-m">--</div>
             </div>
 
-            <!-- 右側圖表區 -->
-            <div class="lg:col-span-7 p-6 flex flex-col space-y-6 bg-white">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-2xl font-black text-slate-800 italic uppercase tracking-tighter">Titration Curve</h2>
-                    <div class="flex gap-2">
-                         <div class="text-[10px] font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">已記錄: <span id="log-count" class="text-indigo-600">0</span></div>
-                         <button onclick="clearAll()" class="text-[10px] font-bold text-rose-500 hover:underline">清空</button>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400">體積 (cm³)</label>
+                            <input type="number" id="m-vol" step="0.5" class="w-full p-4 bg-slate-50 rounded-2xl font-black text-lg outline-none border-2 border-transparent focus:border-indigo-500">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-bold text-slate-400">pH 值</label>
+                            <input type="number" id="m-ph" step="0.1" class="w-full p-4 bg-slate-50 rounded-2xl font-black text-lg outline-none border-2 border-transparent focus:border-indigo-500">
+                        </div>
+                    </div>
+                    <button onclick="addManualData()" class="w-full py-4 bg-slate-800 text-white rounded-2xl font-bold shadow-lg active:scale-95 transition-transform">新增數據點</button>
+                    <div class="max-h-64 overflow-y-auto rounded-2xl border border-slate-100">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-50 text-slate-400 uppercase text-[10px] sticky top-0">
+                                <tr><th class="p-4">Volume</th><th class="p-4">pH</th><th class="p-4 text-right">操作</th></tr>
+                            </thead>
+                            <tbody id="manual-list" class="font-bold"></tbody>
+                        </table>
                     </div>
                 </div>
-
-                <div class="flex-1 min-h-[450px] bg-slate-50/30 rounded-[2rem] p-4 border border-slate-50">
-                    <canvas id="titrationChart"></canvas>
-                </div>
-
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                        <p class="text-[10px] font-bold text-blue-400 uppercase mb-1">中和點預測</p>
-                        <p class="text-lg font-black text-blue-700 italic">~ 10.0 cm³</p>
-                    </div>
-                    <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                        <p class="text-[10px] font-bold text-indigo-400 uppercase mb-1">當前斜率</p>
-                        <p id="slope-info" class="text-lg font-black text-indigo-700 italic">穩定</p>
+                <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                    <div class="chart-container">
+                        <canvas id="manualChart"></canvas>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 處理畫布 (隱藏) -->
-    <canvas id="processCanvas" class="hidden"></canvas>
+    <!-- 3. 自動模式頁面 -->
+    <div id="page-auto" class="page p-6 pt-20">
+        <div class="max-w-6xl mx-auto space-y-6">
+            <div class="flex justify-between items-center px-2">
+                <div id="display-exp-info-a" class="text-xs font-bold text-slate-500 italic">--</div>
+                <div id="alert-box" class="hidden px-4 py-2 bg-rose-500 text-white rounded-full text-[10px] font-black animate-pulse shadow-lg">⚠️ 接近中和點：請逐滴加入！</div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="lg:col-span-5 space-y-6">
+                    <div class="bg-white p-8 rounded-[3.5rem] shadow-xl text-center relative">
+                        <div class="cam-ring mb-6">
+                            <video id="webcam" autoplay playsinline muted></video>
+                            <div class="target-box"></div>
+                        </div>
+                        <div class="flex justify-between items-end px-4 text-left">
+                            <div>
+                                <span class="text-[10px] font-black text-slate-400 block tracking-widest uppercase">Real-time pH</span>
+                                <div id="auto-ph" class="text-6xl font-black text-slate-800 tracking-tighter">--</div>
+                            </div>
+                            <div id="auto-color" class="w-16 h-16 rounded-3xl shadow-inner border-4 border-white"></div>
+                        </div>
+                    </div>
+                    <div class="bg-indigo-900 p-6 rounded-[2.5rem] text-white shadow-2xl space-y-4">
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs font-bold opacity-60">加入量 V / cm³</span>
+                            <div class="flex items-center gap-4">
+                                <button onclick="adjVol(-1)" class="w-10 h-10 bg-white/10 rounded-xl font-black hover:bg-white/20 active:scale-90 transition">-</button>
+                                <span id="auto-vol" class="text-3xl font-black">0.0</span>
+                                <button onclick="adjVol(1)" class="w-10 h-10 bg-white/10 rounded-xl font-black hover:bg-white/20 active:scale-90 transition">+</button>
+                            </div>
+                        </div>
+                        <button id="sync-btn" onclick="syncAutoData()" class="w-full py-5 bg-white text-indigo-900 rounded-3xl font-black shadow-xl hover:bg-slate-100 active:scale-95 transition-all">同步雲端數據</button>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="calibrate(1)" class="flex-1 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black text-rose-500 shadow-sm">校準 pH 1</button>
+                        <button onclick="calibrate(7)" class="flex-1 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black text-emerald-600 shadow-sm">校準 pH 7</button>
+                        <button onclick="calibrate(13)" class="flex-1 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black text-indigo-600 shadow-sm">校準 pH 13</button>
+                    </div>
+                </div>
+                <div class="lg:col-span-7 bg-white p-6 rounded-[3.5rem] shadow-xl border border-slate-50 flex flex-col min-h-[450px]">
+                    <div class="flex justify-between items-center mb-6 px-4">
+                        <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest">滴定曲線分析圖</h3>
+                        <span id="auto-count" class="text-indigo-600 font-bold text-[10px] bg-indigo-50 px-3 py-1 rounded-full">Samples: 0</span>
+                    </div>
+                    <div class="flex-1">
+                        <canvas id="autoChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="snapCanvas" class="hidden"></canvas>
 
     <script>
-        let chart;
-        let dataPoints = [];
-        let isManualMode = false;
-        let calibBase = null;
-        let currentVol = 0;
+        let currentMode = null;
+        let charts = { manual: null, auto: null };
+        let data = { manual: [], auto: [] };
+        let volume = 0;
+        let lastRGB = { r:0, g:0, b:0 };
+        let calibData = JSON.parse(localStorage.getItem('lab_calib') || '{"1":{"r":255,"g":0,"b":0},"7":{"r":0,"g":255,"b":0},"13":{"r":150,"g":0,"b":255}}');
 
-        // 初始化相機
-        async function initCamera() {
-            const video = document.getElementById('webcam');
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: 640, height: 480 },
-                    audio: false 
-                });
-                video.srcObject = stream;
-                video.classList.remove('hidden');
-                document.getElementById('setup-ui').classList.add('hidden');
-                document.getElementById('reticle').classList.remove('hidden');
-                video.onloadedmetadata = () => {
-                    video.play();
-                    requestAnimationFrame(analysisLoop);
-                };
-            } catch (e) {
-                alert("無法存取相機，請檢查瀏覽器權限設置。");
+        // 自定義插件：繪製明確的線軸箭頭
+        const arrowPlugin = {
+            id: 'arrows',
+            afterDraw: (chart) => {
+                const {ctx, chartArea: {left, right, top, bottom}} = chart;
+                ctx.save();
+                ctx.strokeStyle = '#334155'; // 軸線顏色
+                ctx.fillStyle = '#334155';
+                ctx.lineWidth = 2;
+
+                // 繪製 X 軸線
+                ctx.beginPath();
+                ctx.moveTo(left, bottom);
+                ctx.lineTo(right + 15, bottom);
+                ctx.stroke();
+                // X 軸箭頭
+                ctx.beginPath();
+                ctx.moveTo(right + 15, bottom);
+                ctx.lineTo(right + 8, bottom - 4);
+                ctx.lineTo(right + 8, bottom + 4);
+                ctx.fill();
+
+                // 繪製 Y 軸線
+                ctx.beginPath();
+                ctx.moveTo(left, bottom);
+                ctx.lineTo(left, top - 15);
+                ctx.stroke();
+                // Y 軸箭頭
+                ctx.beginPath();
+                ctx.moveTo(left, top - 15);
+                ctx.lineTo(left - 4, top - 8);
+                ctx.lineTo(left + 4, top - 8);
+                ctx.fill();
+
+                ctx.restore();
             }
+        };
+
+        function startMode(mode) {
+            const acid = document.getElementById('setup-acid').value || '酸';
+            const alkali = document.getElementById('setup-alkali').value || '鹼';
+            const ind = document.getElementById('setup-indicator').value || '指示劑';
+
+            document.getElementById('display-acid-m').innerText = acid;
+            document.getElementById('display-alkali-m').innerText = alkali;
+            document.getElementById('display-ind-m').innerText = ind;
+            document.getElementById('display-exp-info-a').innerText = `${acid} + ${alkali} (${ind})`;
+
+            currentMode = mode;
+            switchPage(mode);
+            document.getElementById('mini-nav').classList.remove('hidden');
         }
 
-        // 循環分析鏡頭畫面
-        function analysisLoop() {
-            if (isManualMode) { requestAnimationFrame(analysisLoop); return; }
+        function switchPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(`page-${pageId}`).classList.add('active');
             
-            const video = document.getElementById('webcam');
-            const canvas = document.getElementById('processCanvas');
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                canvas.width = 100; canvas.height = 100;
-                // 擷取中心區域
-                ctx.drawImage(video, video.videoWidth/2-50, video.videoHeight/2-50, 100, 100, 0, 0, 100, 100);
-                
-                const frame = ctx.getImageData(0, 0, 100, 100);
-                let r=0, g=0, b=0;
-                for (let i = 0; i < frame.data.length; i += 4) {
-                    r += frame.data[i];
-                    g += frame.data[i+1];
-                    b += frame.data[i+2];
-                }
-                const total = frame.data.length / 4;
-                const avgR = r/total, avgG = g/total, avgB = b/total;
-
-                // 更新 UI 預覽色
-                document.getElementById('color-preview').style.backgroundColor = `rgb(${avgR},${avgG},${avgB})`;
-
-                // 算法估計 pH (基於紅色通道的強弱，適用於通用指示劑從紅到紫的變化)
-                let estimatedPH = 7.0;
-                if (calibBase) {
-                    // 校準邏輯：pH 7 時的 R 值作為基準
-                    estimatedPH = (7.0 - (avgR - calibBase.r) / 18).toFixed(1);
-                } else {
-                    // 默認邏輯
-                    estimatedPH = (14 - (avgR / 255) * 12).toFixed(1);
-                }
-
-                estimatedPH = Math.max(0, Math.min(14, estimatedPH));
-                document.getElementById('ph-val').innerText = estimatedPH;
-            }
-            requestAnimationFrame(analysisLoop);
-        }
-
-        function setCalibration() {
-            const color = document.getElementById('color-preview').style.backgroundColor;
-            const rgb = color.match(/\d+/g);
-            if (rgb) {
-                calibBase = { r: parseInt(rgb[0]), g: parseInt(rgb[1]), b: parseInt(rgb[2]) };
-                alert("已校準！當前顏色設定為 pH 7.0 基準。");
+            if(pageId === 'manual' && !charts.manual) charts.manual = initChart('manualChart', '加入鹼的體積 V / cm³', 'pH 值');
+            if(pageId === 'auto') {
+                if(!charts.auto) charts.auto = initChart('autoChart', '加入鹼的體積 V / cm³', 'pH 值');
+                startCamera();
             }
         }
 
-        function toggleManual() {
-            isManualMode = !isManualMode;
-            document.getElementById('manual-ui').style.display = isManualMode ? 'block' : 'none';
-            document.getElementById('cam-wrapper').style.opacity = isManualMode ? '0.2' : '1';
-            document.getElementById('mode-toggle').innerText = isManualMode ? '回到鏡頭模式' : '切換手動輸入';
-            if (isManualMode) manualAdjust(7);
+        function goHome() {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById('page-home').classList.add('active');
+            document.getElementById('mini-nav').classList.add('hidden');
+            currentMode = null;
         }
 
-        function manualAdjust(val) {
-            document.getElementById('ph-val').innerText = parseFloat(val).toFixed(1);
-            document.getElementById('slider-hint').innerText = parseFloat(val).toFixed(1);
+        function toggleMode() {
+            const nextMode = currentMode === 'manual' ? 'auto' : 'manual';
+            currentMode = nextMode;
+            switchPage(nextMode);
         }
 
-        function changeVol(n) {
-            currentVol = Math.max(0, currentVol + n);
-            document.getElementById('vol-display').innerText = currentVol.toFixed(1);
-        }
-
-        function logDataPoint() {
-            const ph = parseFloat(document.getElementById('ph-val').innerText);
-            const vol = currentVol;
-            
-            // 檢查是否重複記錄相同體積
-            const existingIdx = dataPoints.findIndex(p => p.x === vol);
-            if (existingIdx !== -1) {
-                dataPoints[existingIdx].y = ph;
-            } else {
-                dataPoints.push({ x: vol, y: ph });
-            }
-
-            dataPoints.sort((a, b) => a.x - b.x);
-            updateChart();
-            document.getElementById('log-count').innerText = dataPoints.length;
-            
-            // 簡單斜率分析
-            if (dataPoints.length > 2) {
-                const last = dataPoints[dataPoints.length-1];
-                const prev = dataPoints[dataPoints.length-2];
-                const diff = Math.abs(last.y - prev.y);
-                document.getElementById('slope-info').innerText = diff > 1.5 ? "劇烈變化" : "穩定";
-                document.getElementById('slope-info').className = diff > 1.5 ? "text-lg font-black text-rose-600 italic" : "text-lg font-black text-indigo-700 italic";
-            }
-        }
-
-        function updateChart() {
-            chart.data.datasets[0].data = dataPoints;
-            chart.update();
-        }
-
-        function exportCSV() {
-            if (dataPoints.length === 0) return alert("尚無數據可導出");
-            let csv = "Volume(cm3),pH\n";
-            dataPoints.forEach(p => csv += `${p.x},${p.y}\n`);
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.setAttribute('hidden', '');
-            a.setAttribute('href', url);
-            a.setAttribute('download', `Titration_Data_${document.getElementById('group-id').value}.csv`);
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-
-        function clearAll() {
-            if (confirm("確定要清空所有記錄嗎？")) {
-                dataPoints = [];
-                updateChart();
-                document.getElementById('log-count').innerText = "0";
-            }
-        }
-
-        window.onload = () => {
-            const ctx = document.getElementById('titrationChart').getContext('2d');
-            chart = new Chart(ctx, {
-                type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'pH 變化曲線',
-                        data: [],
-                        borderColor: '#4f46e5',
-                        backgroundColor: '#4f46e5',
-                        showLine: true,
-                        tension: 0.3,
-                        pointRadius: 6,
-                        pointHoverRadius: 10,
-                        borderWidth: 4
-                    }]
-                },
+        function initChart(id, titleX, titleY) {
+            const ctx = document.getElementById(id).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: { datasets: [{
+                    label: 'pH 值變化',
+                    data: [],
+                    borderColor: '#4f46e5',
+                    borderWidth: 3,
+                    pointBackgroundColor: '#fff',
+                    pointBorderColor: '#4f46e5',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    tension: 0.3,
+                    fill: false
+                }]},
+                plugins: [arrowPlugin],
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    layout: { padding: { right: 20, top: 20 } },
                     scales: {
-                        x: { title: { display: true, text: 'Volume (cm³)', font: { weight: 'bold' } }, min: 0 },
-                        y: { title: { display: true, text: 'pH Value', font: { weight: 'bold' } }, min: 0, max: 14 }
+                        x: { 
+                            type: 'linear', 
+                            min: 0, 
+                            max: 20,
+                            border: { display: true, color: '#334155', width: 2 }, // 明確的軸線
+                            grid: { display: true, color: '#f1f5f9' },
+                            title: { display: true, text: titleX, font: { weight: 'bold', size: 12 } },
+                            ticks: {
+                                callback: function(value) { return value === 0 ? '0' : value; } // 確保 0 只顯示一次
+                            }
+                        },
+                        y: { 
+                            min: 0, 
+                            max: 14,
+                            border: { display: true, color: '#334155', width: 2 }, // 明確的軸線
+                            grid: { display: true, color: '#f1f5f9' },
+                            title: { display: true, text: titleY, font: { weight: 'bold', size: 12 } },
+                            ticks: {
+                                stepSize: 1,
+                                callback: function(value) { return value === 0 ? '' : value; } // Y 軸的 0 隱藏，避免與 X 軸的 0 重疊
+                            }
+                        }
                     },
                     plugins: {
                         legend: { display: false }
                     }
                 }
             });
-        };
+        }
+
+        function addManualData() {
+            const vInput = document.getElementById('m-vol');
+            const pInput = document.getElementById('m-ph');
+            const v = parseFloat(vInput.value);
+            const p = parseFloat(pInput.value);
+            if(isNaN(v) || isNaN(p)) return;
+            data.manual.push({ x: v, y: p });
+            data.manual.sort((a,b) => a.x - b.x);
+            updateManualList();
+            charts.manual.data.datasets[0].data = data.manual;
+            charts.manual.update();
+            vInput.value = ""; pInput.value = "";
+        }
+
+        function updateManualList() {
+            const tbody = document.getElementById('manual-list');
+            tbody.innerHTML = data.manual.map((d, i) => `
+                <tr class="border-b border-slate-50 hover:bg-slate-50">
+                    <td class="p-4 text-slate-800">${d.x}</td>
+                    <td class="p-4 text-indigo-600">${d.y}</td>
+                    <td class="p-4 text-right"><button onclick="data.manual.splice(${i},1);updateManualList();charts.manual.update();" class="text-rose-400 hover:text-rose-600">撤銷</button></td>
+                </tr>
+            `).join('');
+        }
+
+        async function startCamera() {
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                document.getElementById('webcam').srcObject = s;
+                requestAnimationFrame(analyzeLoop);
+            } catch (e) { console.error("Camera error"); }
+        }
+
+        function analyzeLoop() {
+            const v = document.getElementById('webcam');
+            const c = document.getElementById('snapCanvas');
+            if(v.readyState === v.HAVE_ENOUGH_DATA) {
+                const ctx = c.getContext('2d');
+                c.width = 40; c.height = 40;
+                ctx.drawImage(v, v.videoWidth/2-20, v.videoHeight/2-20, 40, 40, 0, 0, 40, 40);
+                const pix = ctx.getImageData(0,0,40,40).data;
+                let r=0, g=0, b=0;
+                for(let i=0; i<pix.length; i+=4) { r+=pix[i]; g+=pix[i+1]; b+=pix[i+2]; }
+                lastRGB = { r: Math.round(r/1600), g: Math.round(g/1600), b: Math.round(b/1600) };
+                document.getElementById('auto-color').style.backgroundColor = `rgb(${lastRGB.r},${lastRGB.g},${lastRGB.b})`;
+                let bestPH = 7; let minDist = Infinity;
+                Object.entries(calibData).forEach(([ph, rgb]) => {
+                    let d = Math.sqrt(Math.pow(lastRGB.r-rgb.r,2)+Math.pow(lastRGB.g-rgb.g,2)+Math.pow(lastRGB.b-rgb.b,2));
+                    if(d < minDist) { minDist = d; bestPH = parseFloat(ph); }
+                });
+                document.getElementById('auto-ph').innerText = bestPH.toFixed(1);
+                const alertBox = document.getElementById('alert-box');
+                if(bestPH > 4 && bestPH < 10) alertBox.classList.remove('hidden');
+                else alertBox.classList.add('hidden');
+            }
+            if(currentMode === 'auto') requestAnimationFrame(analyzeLoop);
+        }
+
+        function calibrate(ph) {
+            calibData[ph] = { ...lastRGB };
+            localStorage.setItem('lab_calib', JSON.stringify(calibData));
+            alert(`已校準 pH ${ph}`);
+        }
+
+        function adjVol(n) {
+            volume = Math.max(0, volume + n);
+            document.getElementById('auto-vol').innerText = volume.toFixed(1);
+        }
+
+        async function syncAutoData() {
+            const ph = parseFloat(document.getElementById('auto-ph').innerText);
+            const btn = document.getElementById('sync-btn');
+            btn.disabled = true; btn.innerText = "同步中...";
+            data.auto.push({ x: volume, y: ph });
+            data.auto.sort((a,b) => a.x - b.x);
+            charts.auto.data.datasets[0].data = data.auto;
+            charts.auto.update();
+            document.getElementById('auto-count').innerText = `Samples: ${data.auto.length}`;
+            if(window.fb && window.fb.isCloudEnabled) {
+                try {
+                    await window.fb.addDoc(window.fb.collection(window.fb.db, "lab_v95_training"), {
+                        acid: document.getElementById('setup-acid').value,
+                        alkali: document.getElementById('setup-alkali').value,
+                        vol: volume, ph: ph, timestamp: Date.now()
+                    });
+                } catch(e) {}
+            }
+            setTimeout(() => { btn.disabled = false; btn.innerText = "同步雲端數據"; }, 600);
+        }
     </script>
 </body>
 </html>
