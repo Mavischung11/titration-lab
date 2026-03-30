@@ -3,487 +3,455 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>實驗 9.5 智能分組實驗 (真實數據版)</title>
-    <!-- Tailwind CSS -->
+    <title>智能滴定實驗系統 Pro - 自定義實驗</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .glass-panel { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
-        .video-container { position: relative; overflow: hidden; border-radius: 0.5rem; }
-        #camera-video { width: 100%; height: auto; transform: scaleX(-1); /* 鏡像顯示 */ }
-        .target-box {
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .video-container { 
+            position: relative; 
+            overflow: hidden; 
+            border-radius: 1.5rem; 
+            background: #111; 
+            aspect-ratio: 4/3;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+        
+        #camera-video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            transform: scaleX(-1); 
+        }
+
+        .target-overlay {
             position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 40px;
-            height: 40px;
-            transform: translate(-50%, -50%);
-            border: 2px solid #00ff00;
-            box-shadow: 0 0 10px rgba(0,255,0,0.5);
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             pointer-events: none;
-            border-radius: 50%;
+        }
+
+        .target-box {
+            width: 60px;
+            height: 60px;
+            border: 3px solid rgba(255, 255, 255, 0.8);
+            border-radius: 12px;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .mode-active { 
+            border-color: #4f46e5 !important; 
+            background-color: #eef2ff !important;
+            color: #4f46e5 !important;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+
+        .calib-btn {
+            transition: all 0.2s;
+            border: 1px solid #e2e8f0;
+        }
+        .calib-btn:hover {
+            border-color: #4f46e5;
+            background: #f8fafc;
+        }
+
+        @keyframes pulse-soft {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.8; }
+        }
+        .detecting-indicator {
+            animation: pulse-soft 2s infinite;
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col">
+<body class="bg-slate-50 min-h-screen text-slate-900">
 
-    <!-- 預先初始化全域變數 -->
-    <script>
-        window.state = window.state || {
-            groupId: localStorage.getItem('lab_group_id') || '',
-            lastRGB: { r: 0, g: 0, b: 0 }
-        };
-        window.setupSync = window.setupSync || function() { console.warn("等待資料庫連線..."); };
-        window.addDataToFirebase = window.addDataToFirebase || async function() { console.warn("等待資料庫連線..."); };
-    </script>
-
-    <!-- 頂部導航列 -->
-    <header class="bg-indigo-700 text-white p-4 shadow-md flex justify-between items-center z-10">
-        <h1 class="text-xl font-bold flex items-center gap-2">
-            <span>🧪</span> 智能滴定數據採集 (搭載真實數據)
-        </h1>
-        <div class="flex items-center gap-4">
-            <span id="display-group" class="font-bold text-sm px-3 py-1 bg-indigo-900 rounded-full border border-indigo-500">
-                尚未分組
-            </span>
-            <span id="admin-badge" class="hidden font-bold text-sm px-3 py-1 bg-rose-600 rounded-full shadow-lg">
-                👑 教師模式
-            </span>
-            <div id="rgb-display" class="font-mono text-sm bg-black text-green-400 px-3 py-1.5 rounded border border-gray-600 shadow-inner flex items-center gap-2 hidden">
-                <div id="live-color-dot" class="w-3 h-3 rounded-full border border-white"></div>
-                <span id="rgb-text">R: --- G: --- B: ---</span>
+    <!-- 啟動設定遮罩層 -->
+    <div id="setup-overlay" class="fixed inset-0 bg-slate-900/90 flex items-center justify-center z-50 p-6 backdrop-blur-sm">
+        <div class="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div class="text-center mb-6">
+                <h1 class="text-3xl font-black text-slate-800">實驗初始化</h1>
+                <p class="text-slate-500 mt-1">請設定本次滴定實驗參數</p>
             </div>
-        </div>
-    </header>
-
-    <!-- 進入實驗室前的設定畫面 -->
-    <div id="setup-layer" class="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 transition-opacity duration-300">
-        <div class="bg-white p-8 rounded-xl shadow-2xl max-w-sm w-full text-center transform scale-100 transition-transform">
-            <h2 class="text-2xl font-bold text-gray-800 mb-6">歡迎進入實驗室</h2>
-            <div class="mb-6">
-                <label class="block text-gray-700 text-sm font-bold mb-2 text-left" for="input-group">
-                    請輸入您的組別編號 (如: G1, G2)
-                </label>
-                <input id="input-group" type="text" placeholder="例如: G1 (教師請輸入 ADMIN)" 
-                    class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg uppercase transition-shadow">
-            </div>
-            <button onclick="enterLab()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors text-lg">
-                進入實驗
-            </button>
-        </div>
-    </div>
-
-    <!-- 主工作區 -->
-    <main class="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        <!-- 左側：攝影機與數據輸入 -->
-        <div class="lg:col-span-1 flex flex-col gap-6">
             
-            <div class="bg-white p-4 rounded-xl shadow-md border border-gray-200">
-                <h3 class="text-lg font-bold text-gray-800 mb-3 border-b pb-2">📹 試管色彩偵測</h3>
-                <div class="video-container bg-black rounded-lg shadow-inner">
-                    <!-- 加上 crossorigin 以避免一些相機存取問題 -->
-                    <video id="camera-video" autoplay playsinline crossorigin="anonymous"></video>
-                    <div class="target-box"></div>
-                </div>
-                <canvas id="procCanvas" class="hidden" width="20" height="20"></canvas>
-                
-                <div class="mt-4 grid grid-cols-2 gap-4">
-                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-200 text-center">
-                        <div class="text-xs text-gray-500 mb-1">偵測顏色</div>
-                        <div id="color-patch" class="h-8 w-full rounded shadow-inner border border-gray-300 bg-gray-200 transition-colors"></div>
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">實驗組別</label>
+                        <input id="group-name" type="text" placeholder="G01" class="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none font-bold">
                     </div>
-                    <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-200 text-center shadow-inner relative overflow-hidden">
-                        <div class="absolute inset-0 bg-indigo-100 opacity-50"></div>
-                        <div class="relative z-10">
-                            <div class="text-xs text-indigo-600 font-bold mb-1">AI 預估 pH 值</div>
-                            <div id="current-ph" class="text-3xl font-black text-indigo-700 drop-shadow-sm">--</div>
-                        </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">初始體積 (mL)</label>
+                        <input id="start-vol" type="number" step="0.1" value="0.0" class="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none font-bold">
                     </div>
                 </div>
-            </div>
 
-            <div class="bg-white p-5 rounded-xl shadow-md border border-gray-200">
-                <h3 class="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📝 紀錄滴定數據</h3>
-                <div class="mb-4">
-                    <label class="block text-gray-700 text-sm font-bold mb-2">
-                        已加入 NaOH 體積 (mL)
-                    </label>
-                    <input id="input-volume" type="number" step="0.1" value="0.0" 
-                        class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg font-mono">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">滴定管液體 (Titant)</label>
+                        <input id="titrant-name" type="text" placeholder="NaOH" class="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">燒杯液體 (Analyte)</label>
+                        <input id="analyte-name" type="text" placeholder="HCl" class="w-full px-4 py-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none font-bold">
+                    </div>
                 </div>
-                <button onclick="recordDataPoint()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-colors flex justify-center items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                    記錄此點數據
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-tighter">初次模式選擇</label>
+                    <div class="grid grid-cols-2 gap-4">
+                        <button onclick="currentMode='auto'; updateSetupUI()" id="setup-btn-auto" class="mode-active border-2 p-4 rounded-2xl flex flex-col items-center transition-all">
+                            <span class="text-2xl mb-1">📸</span>
+                            <span class="font-bold text-sm">AI 偵測</span>
+                        </button>
+                        <button onclick="currentMode='manual'; updateSetupUI()" id="setup-btn-manual" class="border-2 border-slate-100 p-4 rounded-2xl flex flex-col items-center transition-all">
+                            <span class="text-2xl mb-1">⌨️</span>
+                            <span class="font-bold text-sm">手動輸入</span>
+                        </button>
+                    </div>
+                </div>
+
+                <button onclick="initSystem()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl text-lg shadow-xl shadow-indigo-200 transition-all active:scale-95">
+                    進入實驗室
                 </button>
             </div>
         </div>
+    </div>
 
-        <!-- 右側：圖表顯示 -->
-        <div class="lg:col-span-2 bg-white p-4 rounded-xl shadow-md border border-gray-200 flex flex-col">
-            <h3 class="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
-                <span>📈 滴定曲線圖 (pH vs NaOH 體積)</span>
-                <span id="data-count" class="text-sm font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded shadow-inner">資料筆數: 0</span>
-            </h3>
-            <div class="flex-1 relative min-h-[400px]">
-                <canvas id="titrationChart"></canvas>
+    <!-- 主界面 -->
+    <main class="max-w-7xl mx-auto p-4 md:p-10">
+        <header class="flex flex-col md:flex-row justify-between items-end mb-10 gap-6">
+            <div>
+                <div class="flex items-center gap-3 mb-1">
+                    <span class="px-3 py-1 bg-indigo-600 text-white text-[10px] font-black rounded-full uppercase tracking-widest">Smart Titration</span>
+                    <h2 class="text-3xl font-black text-slate-800" id="display-title">--- 滴定 ---</h2>
+                </div>
+                <p id="display-info" class="text-slate-500 font-medium text-lg italic">組別: 未載入</p>
+            </div>
+            
+            <div class="flex bg-white p-1 rounded-2xl shadow-sm border border-slate-200">
+                <button onclick="toggleMode('auto')" id="nav-btn-auto" class="px-6 py-2 rounded-xl font-bold text-sm transition-all">📸 自動</button>
+                <button onclick="toggleMode('manual')" id="nav-btn-manual" class="px-6 py-2 rounded-xl font-bold text-sm transition-all">⌨️ 手動</button>
+            </div>
+
+            <div class="flex gap-2">
+                <button onclick="exportData()" class="bg-white px-5 py-2.5 rounded-xl shadow-sm border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 text-sm">導出數據</button>
+                <button onclick="location.reload()" class="bg-red-50 px-5 py-2.5 rounded-xl border border-red-100 font-bold text-red-600 text-sm">重設</button>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <!-- 左側：數據獲取 -->
+            <div class="lg:col-span-4 space-y-6">
+                
+                <!-- AI 視覺面板 -->
+                <div id="ai-panel" class="glass-card rounded-[2.5rem] shadow-xl overflow-hidden p-6 border-2 border-white">
+                    <div class="video-container mb-4">
+                        <video id="camera-video" autoplay playsinline></video>
+                        <div class="target-overlay">
+                            <div class="target-box"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- 校準控制項 -->
+                    <div class="mb-6 p-4 bg-slate-900 rounded-2xl text-white">
+                        <p class="text-[10px] font-black text-slate-400 mb-3 uppercase tracking-widest flex items-center gap-2">
+                            <span class="w-2 h-2 bg-yellow-400 rounded-full"></span> AI 校準助手 (Standard Solution)
+                        </p>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button onclick="calibrate(4.0)" class="calib-btn bg-slate-800 py-2 rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors">pH 4.0</button>
+                            <button onclick="calibrate(7.0)" class="calib-btn bg-slate-800 py-2 rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors">pH 7.0</button>
+                            <button onclick="calibrate(10.0)" class="calib-btn bg-slate-800 py-2 rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors">pH 10.0</button>
+                        </div>
+                        <p id="calib-status" class="text-[9px] mt-2 text-slate-500 text-center italic">提示：放入標準液後點擊對應按鈕</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <p class="text-[10px] font-black text-slate-400 mb-2 uppercase">當前顏色</p>
+                            <div id="color-block" class="h-10 w-full rounded-xl shadow-inner border-2 border-white"></div>
+                        </div>
+                        <div class="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                            <p class="text-[10px] font-black text-indigo-400 mb-2 uppercase tracking-tighter">AI 估計 pH</p>
+                            <div id="ai-ph" class="text-3xl font-black text-indigo-600 italic">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 記錄控制項 -->
+                <div class="glass-card rounded-[2.5rem] shadow-xl p-8 border-2 border-white">
+                    <div class="space-y-6">
+                        <div>
+                            <label id="vol-label" class="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">滴定液體積 (mL)</label>
+                            <input id="input-vol" type="number" step="0.1" class="w-full px-6 py-5 bg-slate-50 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 outline-none text-3xl font-black mono text-indigo-900">
+                        </div>
+                        
+                        <div id="manual-input-box" class="hidden">
+                            <label class="block text-[10px] font-black text-emerald-600 mb-2 uppercase tracking-widest">手動輸入 pH 值</label>
+                            <input id="input-ph" type="number" step="0.01" placeholder="7.00" class="w-full px-6 py-5 bg-emerald-50 rounded-2xl border-2 border-emerald-100 focus:border-emerald-500 outline-none text-3xl font-black mono text-emerald-900">
+                        </div>
+
+                        <button onclick="saveDataPoint()" class="w-full bg-slate-900 hover:bg-black text-white font-black py-6 rounded-[2rem] text-lg transition-all active:scale-95 shadow-xl flex items-center justify-center gap-3">
+                            <span>📍</span> 紀錄數據
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側：圖表 -->
+            <div class="lg:col-span-8">
+                <div class="glass-card rounded-[3rem] shadow-xl p-8 h-full flex flex-col border-2 border-white min-h-[600px]">
+                    <div class="flex justify-between items-center mb-8">
+                        <div>
+                            <h3 id="chart-title" class="font-black text-2xl text-slate-800 uppercase italic tracking-tighter">Titration Curve</h3>
+                            <p id="analyte-label" class="text-slate-400 text-sm">正在滴定...</p>
+                        </div>
+                        <span id="point-count" class="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-xs font-black">0 POINTS</span>
+                    </div>
+                    <div class="flex-1 relative">
+                        <canvas id="chart-canvas"></canvas>
+                    </div>
+                </div>
             </div>
         </div>
-
     </main>
 
-    <!-- Firebase 模組載入 -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    <canvas id="buffer-canvas" width="40" height="40" class="hidden"></canvas>
 
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'group-lab-95';
-
-        try {
-            if (Object.keys(firebaseConfig).length > 0) {
-                const app = initializeApp(firebaseConfig);
-                const auth = getAuth(app);
-                const db = getFirestore(app);
-
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                };
-
-                initAuth().then(() => {
-                    onAuthStateChanged(auth, user => {
-                        if (user) {
-                            window.firebaseUser = user;
-                            
-                            window.setupSync = () => {
-                                const dataRef = collection(db, 'artifacts', appId, 'public', 'data', 'titration_lab_data');
-                                onSnapshot(dataRef, (snapshot) => {
-                                    const allData = [];
-                                    snapshot.forEach(doc => allData.push({ id: doc.id, ...doc.data() }));
-                                    
-                                    let displayData = allData;
-                                    if (window.state.groupId !== 'ADMIN') {
-                                        displayData = allData.filter(d => d.groupId === window.state.groupId);
-                                    }
-                                    
-                                    if (typeof window.updateChartData === 'function') {
-                                        window.updateChartData(displayData);
-                                    }
-                                }, (error) => console.error("Firebase Snapshot Error:", error));
-                            };
-
-                            window.addDataToFirebase = async (vol, ph, r, g, b) => {
-                                if (!window.firebaseUser) return;
-                                const dataRef = collection(db, 'artifacts', appId, 'public', 'data', 'titration_lab_data');
-                                await addDoc(dataRef, {
-                                    groupId: window.state.groupId,
-                                    userId: window.firebaseUser.uid,
-                                    vol: parseFloat(vol),
-                                    ph: parseFloat(ph),
-                                    r: r, g: g, b: b,
-                                    timestamp: Date.now()
-                                });
-                            };
-
-                            if (window.state.groupId && document.getElementById('setup-layer').classList.contains('hidden')) {
-                                window.setupSync();
-                            }
-                        }
-                    });
-                }).catch(e => console.error("Firebase Auth Error:", e));
-            }
-        } catch (error) {
-            console.error("Firebase Initialization Error:", error);
-        }
-    </script>
-
-    <!-- UI 互動與演算法 -->
     <script>
+        // --- 狀態變數 ---
+        let currentMode = 'auto';
         let chartInstance = null;
+        let experimentData = [];
         let videoStream = null;
         
-        // 用來保存在沒有 Firebase 時的單機測試數據
-        let localData = []; 
+        // 初始設定資料
+        let config = {
+            group: 'G01',
+            titrant: 'NaOH',
+            analyte: 'HCl',
+            startVol: 0.0
+        };
 
-        function enterLab() {
-            const input = document.getElementById('input-group');
-            const gid = input.value.trim().toUpperCase();
-            if (!gid) {
-                input.classList.add('border-red-500', 'ring-2', 'ring-red-200');
-                setTimeout(() => input.classList.remove('border-red-500', 'ring-2', 'ring-red-200'), 1500);
-                return;
-            }
+        // 校準點 (使用者可以動態增加)
+        let calibrationPoints = [
+            { ph: 1.0, r: 230, g: 60, b: 60 },
+            { ph: 7.0, r: 100, g: 200, b: 100 },
+            { ph: 13.0, r: 160, g: 40, b: 160 }
+        ];
 
-            window.state.groupId = gid;
-            localStorage.setItem('lab_group_id', gid);
+        // 當前相機偵測到的 RGB
+        let currentRGB = { r: 0, g: 0, b: 0 };
+
+        // --- 初始化功能 ---
+        function updateSetupUI() {
+            document.getElementById('setup-btn-auto').className = currentMode === 'auto' ? 'mode-active border-2 p-4 rounded-2xl flex flex-col items-center transition-all' : 'border-2 border-slate-100 p-4 rounded-2xl flex flex-col items-center transition-all hover:bg-slate-50';
+            document.getElementById('setup-btn-manual').className = currentMode === 'manual' ? 'mode-active border-2 p-4 rounded-2xl flex flex-col items-center transition-all' : 'border-2 border-slate-100 p-4 rounded-2xl flex flex-col items-center transition-all hover:bg-slate-50';
+        }
+
+        async function initSystem() {
+            config.group = document.getElementById('group-name').value.trim() || '匿名組';
+            config.titrant = document.getElementById('titrant-name').value.trim() || 'NaOH';
+            config.analyte = document.getElementById('analyte-name').value.trim() || 'HCl';
+            config.startVol = parseFloat(document.getElementById('start-vol').value) || 0.0;
+
+            // 更新 UI 顯示
+            document.getElementById('display-title').innerText = `${config.titrant} 滴定 ${config.analyte}`;
+            document.getElementById('display-info').innerText = `組別: ${config.group.toUpperCase()}`;
+            document.getElementById('vol-label').innerText = `${config.titrant} 體積 (mL)`;
+            document.getElementById('analyte-label').innerText = `燒杯內液體: ${config.analyte}`;
+            document.getElementById('input-vol').value = config.startVol.toFixed(1);
             
-            document.getElementById('setup-layer').classList.add('opacity-0');
-            setTimeout(() => document.getElementById('setup-layer').classList.add('hidden'), 300);
+            document.getElementById('setup-overlay').style.display = 'none';
             
-            document.getElementById('display-group').innerText = `組別: ${gid}`;
-            if (gid === 'ADMIN') {
-                document.getElementById('admin-badge').classList.remove('hidden');
-            }
-            document.getElementById('rgb-display').classList.remove('hidden');
-
             initChart();
-            startCamera();
+            toggleMode(currentMode);
+        }
+
+        function toggleMode(mode) {
+            currentMode = mode;
             
-            // 如果連線就緒就啟用同步
-            if (typeof window.setupSync === 'function' && window.setupSync.toString().indexOf("等待") === -1) {
-                window.setupSync();
+            // 更新導覽列 UI
+            document.getElementById('nav-btn-auto').className = mode === 'auto' ? 'bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md' : 'px-6 py-2 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-600';
+            document.getElementById('nav-btn-manual').className = mode === 'manual' ? 'bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md' : 'px-6 py-2 rounded-xl font-bold text-sm text-slate-400 hover:text-slate-600';
+
+            // 控制面板顯示
+            if (mode === 'auto') {
+                document.getElementById('ai-panel').style.display = 'block';
+                document.getElementById('manual-input-box').style.display = 'none';
+                if (!videoStream) startCamera();
+            } else {
+                document.getElementById('ai-panel').style.display = 'none';
+                document.getElementById('manual-input-box').style.display = 'block';
             }
         }
 
-        // 自動登入之前的組別
-        if (window.state.groupId) {
-            document.getElementById('input-group').value = window.state.groupId;
-        }
-
+        // --- AI 視覺與校準 ---
         async function startCamera() {
             const video = document.getElementById('camera-video');
             try {
                 videoStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } } 
+                    video: { facingMode: 'environment', width: 640, height: 480 } 
                 });
                 video.srcObject = videoStream;
-                video.onloadedmetadata = () => {
-                    video.play();
-                    requestAnimationFrame(processVideoFrame);
-                };
+                processVision();
             } catch (err) {
-                console.error("無法存取攝影機: ", err);
-                document.getElementById('current-ph').innerText = "無相機";
+                console.error("Camera error:", err);
+                alert("無法存取相機，請檢查瀏覽器權限。");
             }
         }
 
-        function processVideoFrame() {
+        function processVision() {
             const video = document.getElementById('camera-video');
-            if (!video.videoWidth) {
-                requestAnimationFrame(processVideoFrame);
+            const canvas = document.getElementById('buffer-canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            const tick = () => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const size = 40;
+                    ctx.drawImage(video, video.videoWidth/2 - size/2, video.videoHeight/2 - size/2, size, size, 0, 0, size, size);
+                    const pixels = ctx.getImageData(0, 0, size, size).data;
+                    
+                    let r = 0, g = 0, b = 0;
+                    for (let i = 0; i < pixels.length; i += 4) {
+                        r += pixels[i]; g += pixels[i+1]; b += pixels[i+2];
+                    }
+                    const count = pixels.length / 4;
+                    currentRGB = { r: Math.round(r/count), g: Math.round(g/count), b: Math.round(b/count) };
+
+                    const ph = estimatePH(currentRGB.r, currentRGB.g, currentRGB.b);
+                    
+                    document.getElementById('color-block').style.backgroundColor = `rgb(${currentRGB.r},${currentRGB.g},${currentRGB.b})`;
+                    document.getElementById('ai-ph').innerText = ph.toFixed(2);
+                }
+                if (currentMode === 'auto') requestAnimationFrame(tick);
+                else setTimeout(tick, 500); // 手動模式時背景慢速運行
+            };
+            tick();
+        }
+
+        // 使用 IDW 演算法預測 pH
+        function estimatePH(r, g, b) {
+            let weightedSum = 0, weightTotal = 0;
+            calibrationPoints.forEach(p => {
+                const dist = Math.sqrt((r - p.r)**2 + (g - p.g)**2 + (b - p.b)**2);
+                const weight = 1 / (Math.pow(dist, 3) + 0.001);
+                weightedSum += p.ph * weight;
+                weightTotal += weight;
+            });
+            return weightedSum / weightTotal;
+        }
+
+        // 校準功能
+        function calibrate(targetPH) {
+            // 檢查當前顏色是否有效（非全黑）
+            if (currentRGB.r === 0 && currentRGB.g === 0 && currentRGB.b === 0) {
+                alert("尚未獲取影像，請確保鏡頭已開啟");
                 return;
             }
 
-            const canvas = document.getElementById('procCanvas');
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            const size = 20; 
-
-            // 擷取中心區域
-            ctx.drawImage(video, video.videoWidth / 2 - size / 2, video.videoHeight / 2 - size / 2, size, size, 0, 0, size, size);
+            // 更新或加入校準點
+            const existingIdx = calibrationPoints.findIndex(p => p.ph === targetPH);
+            const newPoint = { ph: targetPH, ...currentRGB };
             
-            const frame = ctx.getImageData(0, 0, size, size);
-            const data = frame.data;
-            let r = 0, g = 0, b = 0;
-            
-            // 計算平均顏色
-            for (let i = 0; i < data.length; i += 4) {
-                r += data[i];
-                g += data[i + 1];
-                b += data[i + 2];
+            if (existingIdx >= 0) {
+                calibrationPoints[existingIdx] = newPoint;
+            } else {
+                calibrationPoints.push(newPoint);
             }
-            
-            const pixelCount = data.length / 4;
-            r = Math.round(r / pixelCount);
-            g = Math.round(g / pixelCount);
-            b = Math.round(b / pixelCount);
-            
-            window.state.lastRGB = { r, g, b };
-            
-            const colorStr = `rgb(${r}, ${g}, ${b})`;
-            document.getElementById('color-patch').style.backgroundColor = colorStr;
-            
-            document.getElementById('live-color-dot').style.backgroundColor = colorStr;
-            document.getElementById('rgb-text').innerText = `R:${r.toString().padStart(3, '0')} G:${g.toString().padStart(3, '0')} B:${b.toString().padStart(3, '0')}`;
-            
-            // 進行真實數據預測
-            const estimatedPH = estimatePH(r, g, b);
-            document.getElementById('current-ph').innerText = estimatedPH.toFixed(2);
 
-            setTimeout(() => requestAnimationFrame(processVideoFrame), 200); 
+            // UI 回饋
+            const status = document.getElementById('calib-status');
+            status.innerText = `✅ 已校準 pH ${targetPH} (R:${newPoint.r} G:${newPoint.g} B:${newPoint.b})`;
+            status.classList.remove('text-slate-500');
+            status.classList.add('text-green-500', 'font-bold');
+            
+            setTimeout(() => {
+                status.classList.remove('text-green-500', 'font-bold');
+                status.classList.add('text-slate-500');
+                status.innerText = `校準完成，目前共有 ${calibrationPoints.length} 個參考點`;
+            }, 3000);
         }
 
-        // ==========================================
-        // 🚀 真實數據預測演算法 (IDW - 反距離加權)
-        // ==========================================
-        function estimatePH(r, g, b) {
-            // 從您上傳的 CSV 中匯入的真實數據點！
-            const calibrationMap = [
-                // 1.1 ~ 1.84 (酸性 / 紅橙色系)
-                { ph: 1.10, r: 206, g: 151, b: 133 },
-                { ph: 1.10, r: 166, g: 121, b: 112 },
-                { ph: 1.25, r: 176, g: 133, b: 122 },
-                { ph: 1.39, r: 193, g: 154, b: 142 },
-                { ph: 1.39, r: 172, g: 124, b: 112 },
-                { ph: 1.46, r: 181, g: 135, b: 122 },
-                { ph: 1.46, r: 177, g: 128, b: 115 },
-                { ph: 1.56, r: 198, g: 162, b: 152 },
-                { ph: 1.56, r: 210, g: 158, b: 143 },
-                { ph: 1.84, r: 192, g: 150, b: 138 },
-                { ph: 1.84, r: 203, g: 149, b: 135 },
-                
-                // 補充的中性緩衝點 (防止當量點跳躍時色彩誤判)
-                { ph: 7.00, r: 160, g: 170, b: 140 }, 
-
-                // 9.74 ~ 11.82 (鹼性 / 藍紫色系)
-                { ph: 9.74, r: 161, g: 159, b: 163 },
-                { ph: 9.74, r: 166, g: 164, b: 169 },
-                { ph: 11.05, r: 146, g: 139, b: 174 },
-                { ph: 11.05, r: 141, g: 132, b: 160 },
-                { ph: 11.82, r: 135, g: 125, b: 165 } // 根據趨勢補齊截斷的最後一筆數據
-            ];
-
-            let numerator = 0;
-            let denominator = 0;
-            const power = 4; // 權重指數，4代表越接近的顏色影響力呈指數放大
-
-            for (const point of calibrationMap) {
-                // 計算色彩空間中的歐幾里得距離
-                const dist = Math.sqrt(Math.pow(r - point.r, 2) + Math.pow(g - point.g, 2) + Math.pow(b - point.b, 2));
-                
-                // 如果顏色完全一樣，直接回傳對應的 pH 值
-                if (dist === 0) return point.ph;
-
-                // 距離越近，權重 (weight) 越高
-                const weight = 1 / Math.pow(dist, power);
-                numerator += weight * point.ph;
-                denominator += weight;
-            }
-            
-            return numerator / denominator;
-        }
-
-        // ==========================================
-        // 📊 圖表繪製與更新邏輯
-        // ==========================================
-
+        // --- 數據與圖表 ---
         function initChart() {
-            const ctx = document.getElementById('titrationChart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
-
+            const ctx = document.getElementById('chart-canvas').getContext('2d');
             chartInstance = new Chart(ctx, {
                 type: 'scatter',
                 data: {
                     datasets: [{
-                        label: '實驗滴定曲線',
                         data: [],
-                        backgroundColor: 'rgba(236, 72, 153, 0.8)', // 粉紅色
-                        borderColor: 'rgba(219, 39, 119, 1)',
-                        borderWidth: 2,
+                        showLine: true,
+                        borderColor: '#4f46e5',
+                        backgroundColor: '#ffffff',
+                        borderWidth: 4,
                         pointRadius: 6,
-                        pointHoverRadius: 8,
-                        showLine: true, 
-                        tension: 0.4 // 平滑曲線
+                        tension: 0.4
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: {
-                            type: 'linear',
-                            position: 'bottom',
-                            title: { display: true, text: '已加入 NaOH 體積 (mL)', font: { size: 14, weight: 'bold' } },
-                            min: 0
-                        },
-                        y: {
-                            title: { display: true, text: '預測 pH 值', font: { size: 14, weight: 'bold' } },
-                            min: 0,
-                            max: 14,
-                            ticks: { stepSize: 2 }
-                        }
+                        x: { title: { display: true, text: 'Volume / mL', font: {weight: 'bold'} } },
+                        y: { min: 0, max: 14, title: { display: true, text: 'pH', font: {weight: 'bold'} } }
                     },
-                    plugins: {
-                        legend: { display: window.state.groupId === 'ADMIN' },
-                        tooltip: {
-                            callbacks: {
-                                label: function(ctx) {
-                                    return `NaOH: ${ctx.parsed.x} mL, pH: ${ctx.parsed.y.toFixed(2)}`;
-                                }
-                            }
-                        }
-                    }
+                    plugins: { legend: { display: false } }
                 }
             });
         }
 
-        window.updateChartData = function(dataArray) {
-            if (!chartInstance) return;
-
-            document.getElementById('data-count').innerText = `資料筆數: ${dataArray.length}`;
-
-            if (window.state.groupId === 'ADMIN') {
-                const groupMap = {};
-                dataArray.forEach(d => {
-                    if (!groupMap[d.groupId]) groupMap[d.groupId] = [];
-                    groupMap[d.groupId].push({ x: d.vol, y: d.ph, d_vol: d.vol });
-                });
-
-                const datasets = [];
-                const colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6'];
-                let cIdx = 0;
-
-                for (const [gid, pts] of Object.entries(groupMap)) {
-                    pts.sort((a, b) => a.d_vol - b.d_vol); 
-                    datasets.push({
-                        label: `組別: ${gid}`,
-                        data: pts,
-                        backgroundColor: colors[cIdx % colors.length],
-                        borderColor: colors[cIdx % colors.length],
-                        showLine: true,
-                        tension: 0.4
-                    });
-                    cIdx++;
-                }
-                chartInstance.data.datasets = datasets;
-
-            } else {
-                // 單一組別視角
-                const pts = dataArray.map(d => ({ x: d.vol, y: d.ph })).sort((a, b) => a.x - b.x);
-                // 確保 datasets[0] 存在再更新
-                if (chartInstance.data.datasets && chartInstance.data.datasets.length > 0) {
-                    chartInstance.data.datasets[0].data = pts;
-                }
-            }
-
-            chartInstance.update();
-        };
-
-        function recordDataPoint() {
-            const volInput = document.getElementById('input-volume');
+        function saveDataPoint() {
+            const volInput = document.getElementById('input-vol');
             const vol = parseFloat(volInput.value);
-            const phStr = document.getElementById('current-ph').innerText;
-            const ph = parseFloat(phStr);
-            const { r, g, b } = window.state.lastRGB;
+            let ph;
 
-            if (isNaN(vol) || isNaN(ph)) return;
-
-            const btn = event.currentTarget;
-            const ogText = btn.innerHTML;
-            btn.innerHTML = "✅ 紀錄成功！";
-            btn.classList.add('bg-teal-600');
-            setTimeout(() => {
-                btn.innerHTML = ogText;
-                btn.classList.remove('bg-teal-600');
-                // 自動增加 0.5 mL 方便快速滴定紀錄
-                volInput.value = (vol + 0.5).toFixed(1);
-            }, 1000);
-
-            // 如果有連線就送到雲端，沒有連線就顯示在本地端
-            if (typeof window.addDataToFirebase === 'function' && window.addDataToFirebase.toString().indexOf("等待") === -1) {
-                window.addDataToFirebase(vol, ph, r, g, b);
+            if (currentMode === 'auto') {
+                ph = parseFloat(document.getElementById('ai-ph').innerText);
             } else {
-                localData.push({ groupId: window.state.groupId, vol: vol, ph: ph, r: r, g: g, b: b });
-                window.updateChartData(localData);
+                ph = parseFloat(document.getElementById('input-ph').value);
             }
+
+            if (isNaN(vol) || isNaN(ph)) return alert("請輸入有效數值");
+
+            experimentData.push({ x: vol, y: ph });
+            experimentData.sort((a, b) => a.x - b.x);
+
+            chartInstance.data.datasets[0].data = experimentData;
+            chartInstance.update();
+
+            document.getElementById('point-count').innerText = `${experimentData.length} POINTS`;
+            
+            // 自動增加 0.5 mL 方便下次輸入
+            volInput.value = (vol + 0.5).toFixed(1);
+            if (currentMode === 'manual') document.getElementById('input-ph').value = '';
         }
 
+        function exportData() {
+            if (experimentData.length === 0) return alert("尚無數據");
+            let csv = `Group,${config.group}\nTitrant,${config.titrant}\nAnalyte,${config.analyte}\n\nVolume(mL),pH\n`;
+            experimentData.forEach(p => csv += `${p.x},${p.y.toFixed(2)}\n`);
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `滴定實驗_${config.group}_${new Date().getTime()}.csv`;
+            a.click();
+        }
     </script>
 </body>
 </html>
